@@ -1,0 +1,20 @@
+# virtualenv
+venv/
+.venv/
+
+# python cache
+__pycache__/
+*.pyc
+
+# model files (VERY IMPORTANT)
+*.pt
+*.bin
+
+# os
+.DS_Store
+
+reports.jsonl
+reports/
+data/malicious_phish.csv
+
+

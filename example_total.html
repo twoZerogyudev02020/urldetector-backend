@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>URLDETECTOR - 모바일 시연</title>
+  <style>
+    body {
+      background-color: #f0f2f5;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+    }
+
+    .phone-frame {
+      background-color: white;
+      width: 360px;
+      height: 720px;
+      border-radius: 30px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+      border: 12px solid #333;
+      overflow-y: auto;
+      position: relative;
+    }
+
+    .chat-header {
+      background-color: #f8f9fa;
+      padding: 15px;
+      border-bottom: 1px solid #eee;
+      text-align: center;
+      font-weight: bold;
+      font-size: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+
+    .chat-body { padding: 14px 14px 120px 14px; }
+
+    .thread {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .sender-info {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 6px;
+      display: block;
+    }
+
+    .message-bubble {
+      background-color: #f1f2f3;
+      border-radius: 15px;
+      padding: 14px;
+      font-size: 14px;
+      line-height: 1.45;
+      position: relative;
+      max-width: 100%;
+    }
+
+    .message-bubble::before {
+      content: "";
+      position: absolute;
+      left: -8px;
+      top: 15px;
+      border-top: 8px solid transparent;
+      border-bottom: 8px solid transparent;
+      border-right: 10px solid #f1f2f3;
+    }
+
+    /* 탐지 결과 말풍선 */
+    .detect-bubble{
+      background: #ffffff;
+      border-radius: 18px;
+      padding: 14px 14px 12px 14px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+      border: 1px solid rgba(0,0,0,0.06);
+    }
+    .detect-title{
+      font-weight: 900;
+      font-size: 13px;
+      margin-bottom: 8px;
+      color: #111;
+      letter-spacing: -0.2px;
+    }
+    .detect-sub{
+      font-size: 12px;
+      color: rgba(0,0,0,0.62);
+      line-height: 1.35;
+      margin-bottom: 10px;
+    }
+
+    .pill-row{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .pill{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 900;
+      border-radius: 999px;
+      padding: 8px 12px;
+      color: #fff;
+      background: #e53935;
+      letter-spacing: -0.2px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .pill.safe { background: #2e7d32; }            /* (선택) SAFE는 초록 유지해도 되고 */
+    .pill.med  { background: #f9d423; color:#111;}  /* 노랑 */
+    .pill.high { background: #ff9f43; }            /* 주황 */
+    .pill.critical { background: #e53935; }        /* 빨강 */
+
+    .url-box.med{
+      border-color: rgba(249,212,35,0.85);
+      background: rgba(249,212,35,0.10);
+    }
+    .url-box.high{
+      border-color: rgba(255,159,67,0.85);
+      background: rgba(255,159,67,0.10);
+    }
+    .url-box.critical{
+      border-color: rgba(229,57,53,0.85);
+      background: rgba(229,57,53,0.10);
+    }
+
+    .pill.loading { background: #455a64; }
+
+    .pill .dot{
+      width: 8px; height: 8px; border-radius: 999px; background: rgba(255,255,255,0.9);
+      display: inline-block;
+    }
+    .pill.warn .dot{ background: rgba(0,0,0,0.7); }
+    .pill.loading .dot{ background: rgba(255,255,255,0.75); }
+
+    .url-box{
+      display: block;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 2px solid #ff5a5a;
+      background: rgba(255,90,90,0.06);
+      color: #0b57d0;
+      font-weight: 900;
+      word-break: break-all;
+      text-decoration: none;
+    }
+    .url-box.safe{
+      border-color: rgba(46,125,50,0.55);
+      background: rgba(46,125,50,0.06);
+    }
+    .url-box.warn{
+      border-color: rgba(249,168,37,0.75);
+      background: rgba(249,168,37,0.08);
+    }
+    .url-box.loading{
+      border-color: rgba(69,90,100,0.55);
+      background: rgba(69,90,100,0.06);
+      color: rgba(11,87,208,0.85);
+    }
+
+    .footnote{
+      margin-top: 8px;
+      font-size: 11px;
+      color: rgba(0,0,0,0.55);
+    }
+
+    .composer{
+      position: sticky;
+      bottom: 0;
+      z-index: 10;
+      padding: 10px 12px 14px 12px;
+      background: linear-gradient(to top, rgba(255,255,255,1) 65%, rgba(255,255,255,0.0));
+      border-top: 1px solid rgba(0,0,0,0.06);
+    }
+
+    .detector-wrap{
+      background:#0f121a;
+      color:#fff;
+      border-radius:16px;
+      padding:12px;
+      box-shadow:0 0 0 1px rgba(0,0,0,0.08);
+    }
+    .detector-title{
+      font-size:12px;
+      font-weight:800;
+      margin-bottom:10px;
+      opacity:.95;
+      display:flex;
+      gap:8px;
+      align-items:center;
+    }
+    .detector-title .dot{ width:8px; height:8px; border-radius:999px; background:#5ad0ff; display:inline-block; }
+    .detector-input{
+      width:100%;
+      box-sizing:border-box;
+      border-radius:14px;
+      border:0;
+      padding:12px 12px;
+      font-size:14px;
+      outline:none;
+      background:#ffffff;
+      color:#111;
+    }
+    .row{
+      display:flex;
+      gap:10px;
+      margin-top:10px;
+    }
+    .btn{
+      flex:1;
+      border:0;
+      border-radius:14px;
+      padding:11px 10px;
+      font-weight:900;
+      cursor:pointer;
+      font-size:14px;
+    }
+    .btn-primary{ background:#ffd54a; color:#111; }
+    .btn-ghost{ background:rgba(255,255,255,0.12); color:#fff; }
+
+    .hint{
+      margin-top:8px;
+      font-size:11px;
+      color:rgba(255,255,255,0.72);
+      line-height:1.4;
+    }
+
+    .ppt-cases { display: none; }
+
+    @media (max-width: 480px) {
+      body { align-items: stretch; }
+      .phone-frame{
+        width: 100%;
+        height: auto;
+        min-height: 100vh;
+        border-radius: 0;
+        border-width: 0;
+        box-shadow: none;
+        overflow-y: visible;
+      }
+      .chat-body { padding-bottom: 180px; }
+      .composer{
+        position: fixed;
+        left: 0; right: 0;
+        bottom: env(safe-area-inset-bottom);
+      }
+    }
+  </style>
+</head>
+
+<body>
+<div class="phone-frame">
+  <div class="chat-header">국제발신 (Web) · vTEST-123</div>
+
+  <div class="chat-body">
+    <div class="thread" id="thread">
+      <div>
+        <span class="sender-info">안내</span>
+        <div class="message-bubble">
+          복사한 문장/URL을 아래에 붙여넣으면, 링크를 추출해 <b>탐지 결과</b>를 먼저 보여주고<br/>
+          <b>탐지하기</b>를 누르면 guide로 이동합니다.
+        </div>
+      </div>
+
+
+      <!-- ✅ 결과 말풍선은 “여기 1개만” 유지하면서 업데이트 -->
+      <div id="resultWrap" style="display:none;">
+        <span class="sender-info">010-3333-3333</span>
+        <div class="detect-bubble" id="resultBubble"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="detector-wrap">
+      <div class="detector-title">
+        <span class="dot"></span>
+        URLDETECTOR 실시간 탐지 (복사 → 앱 실행 → 붙여넣기)
+      </div>
+
+      <input id="paste" class="detector-input"
+             placeholder="(광고) 시크릿 쿠폰 도착... / 링크를 여기 붙여넣기" />
+
+      <div class="row">
+        <button class="btn btn-primary" id="scanBtn">탐지하기</button>
+        <button class="btn btn-ghost" id="clearBtn">지우기</button>
+      </div>
+
+      <div class="hint">
+        붙여넣은 문장/URL에서 링크를 추출해 <b>guide</b>로 이동합니다.<br/>
+        (Risk/Conf/IOC/Known 근거를 상세 안내)
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function extractFirstUrl(text) {
+    const s = (text || "").trim();
+    if (!s) return "";
+    const m = s.match(/https?:\/\/[^\s<>"')]+/i);
+    return m ? m[0] : s;
+  }
+
+  // ✅ 모바일/PC 붙여넣기 차이 제거(보이지 않는 문자/줄바꿈/끝 구두점)
+  function cleanUrlClient(u) {
+    let s = (u || "");
+    s = s.replace(/[\r\n\t]+/g, " ");
+    s = s.replace(/[\u00A0\u200B-\u200D\uFEFF]/g, "");
+    s = s.trim();
+    s = s.replace(/[)\].,!?]+$/g, "");
+    return s;
+  }
+
+  async function predictUrl(url) {
+    const ts = Date.now(); // 캐시/중간프록시 영향 최소화
+    const res = await fetch("/predict?ts=" + ts, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      cache: "no-store",
+      body: JSON.stringify({ url, page_url: "app", anchor_text: "pasted" })
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error("predict failed: " + res.status + " " + t);
+    }
+    return await res.json();
+  }
+
+  function toMetaFromPredict(p) {
+    // ✅ “서버가 계산한 conf_pct” 우선 (guide와 동일 기준)
+    let confPct = 0;
+    if (p.risk_breakdown && typeof p.risk_breakdown.conf_pct === "number") {
+      confPct = Math.round(p.risk_breakdown.conf_pct);
+    } else {
+      let conf01 = (typeof p.confidence === "number") ? p.confidence : 0;
+      if (conf01 > 1.0001) conf01 = conf01 / 100.0;
+      confPct = Math.round(conf01 * 100);
+    }
+
+    let riskScore = 0;
+    if (typeof p.risk === "number") riskScore = Math.round(p.risk);
+
+    const label = (p.label || "CHECK").toUpperCase();
+
+    let level = "med"; // 기본
+    if (label === "SAFE" || riskScore < 40) level = "safe";
+    else if (riskScore < 70) level = "med";
+    else if (riskScore < 85) level = "high";
+    else level = "critical";
+
+    return { level, type: label, risk: riskScore, conf: confPct };
+  }
+
+  function titleFromMeta(meta) {
+    const { level, type } = meta;
+    if (level === "safe") return `[A] 정상(SAFE · 양호)`;
+    if (level === "med")  return `[B] 보통(${type} · 주의)`;
+    if (level === "high") return `[C] 위험(${type} · 고위험)`;
+    return `[D] 매우위험(${type} · 최상위)`;
+  }
+
+  // ✅ 결과 말풍선 1개만 “업데이트” (append 금지)
+  function renderResultBubble(mode, data) {
+    const wrap = document.getElementById("resultWrap");
+    const bubble = document.getElementById("resultBubble");
+    wrap.style.display = "block";
+
+    if (mode === "loading") {
+      const url = data.url;
+      bubble.innerHTML = `
+        <div class="detect-title">[분석 중...]</div>
+        <div class="detect-sub">백엔드 모델이 링크를 분석 중입니다.</div>
+        <div class="pill-row">
+          <div class="pill loading"><span class="dot"></span> ANALYZING · 잠시만</div>
+        </div>
+        <a class="url-box loading" href="javascript:void(0)">${url}</a>
+        <div class="footnote">※ 네트워크/모델 처리 시간에 따라 0.2~1초 정도 걸릴 수 있어요.</div>
+      `;
+      return;
+    }
+
+    if (mode === "error") {
+      bubble.innerHTML = `
+        <div class="detect-title">[분석 실패]</div>
+        <div class="detect-sub">서버 연결 또는 모델 처리에 실패했습니다. 잠시 후 다시 시도하세요.</div>
+      `;
+      return;
+    }
+
+    // mode === "result"
+    const { url, normalizedUrl, meta } = data;
+    const { level, type, risk, conf } = meta;
+
+    const pillClass =
+      level === "safe" ? "pill safe" :
+      level === "med" ? "pill med" :
+      level === "high" ? "pill high" : "pill critical";
+
+    const urlClass =
+      level === "safe" ? "url-box safe" :
+      level === "med" ? "url-box med" :
+      level === "high" ? "url-box high" : "url-box critical";
+
+    const title = titleFromMeta(meta);
+
+    // ✅ 화면/guide 링크는 “서버 normalized_url”을 사용 (PC/모바일 동일 보장)
+    const finalUrl = normalizedUrl || url;
+
+    bubble.innerHTML = `
+      <div class="detect-title">${title}</div>
+      <div class="detect-sub">
+        붙여넣은 내용에서 링크를 추출했습니다. 바로 열지 말고 안내를 확인하세요.
+      </div>
+
+      <div class="pill-row">
+        <div class="${pillClass}">
+          <span class="dot"></span>
+          RISK ${risk} · ${type} · ${conf}%
+        </div>
+      </div>
+
+      <a class="${urlClass}" href="javascript:void(0)" data-url="${encodeURIComponent(finalUrl)}">
+        ${finalUrl}
+      </a>
+
+      <div class="footnote">
+        ※ 아이디/비밀번호 입력 요구 · 설치파일 유도 · 계정 인증 요청 등은 특히 주의
+      </div>
+    `;
+
+    bubble.querySelector("a").addEventListener("click", (e) => {
+      const u = decodeURIComponent(e.currentTarget.getAttribute("data-url"));
+      location.href = "/guide?url=" + encodeURIComponent(u);
+    });
+  }
+
+  const paste = document.getElementById("paste");
+  const scanBtn = document.getElementById("scanBtn");
+  const clearBtn = document.getElementById("clearBtn");
+
+  let debounceTimer = null;
+  let inflightToken = 0;
+  let lastUrl = "";
+
+  function goGuide(url) {
+    const v = (url || "").trim();
+    if (!v) return;
+    location.href = "/guide?url=" + encodeURIComponent(v);
+  }
+
+  function schedulePredict() {
+    let url = cleanUrlClient(extractFirstUrl(paste.value));
+    if (!url) return;
+    if (url === lastUrl) return;
+    lastUrl = url;
+
+    if (debounceTimer) clearTimeout(debounceTimer);
+    const token = ++inflightToken;
+
+    debounceTimer = setTimeout(async () => {
+      // ✅ 시작 시점에 “로딩”으로 1개 말풍선 업데이트
+      renderResultBubble("loading", { url });
+
+      try {
+        const p = await predictUrl(url);
+
+        // ✅ 마지막 요청만 반영 (PC에서 2개 뜨는 현상 근본 제거)
+        if (token !== inflightToken) return;
+
+        const meta = toMetaFromPredict(p);
+
+        // 서버가 보내준 normalized_url을 그대로 사용
+        const normalizedUrl = (typeof p.normalized_url === "string") ? p.normalized_url : url;
+
+        renderResultBubble("result", { url, normalizedUrl, meta });
+
+        // 자동 스크롤
+        const thread = document.getElementById("thread");
+        thread.parentElement.parentElement.scrollTop = thread.parentElement.parentElement.scrollHeight;
+
+      } catch (e) {
+        if (token !== inflightToken) return;
+        renderResultBubble("error", {});
+      }
+    }, 600);
+  }
+
+  paste.addEventListener("input", schedulePredict);
+
+  paste.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      let url = cleanUrlClient(extractFirstUrl(paste.value));
+      goGuide(url);
+    }
+  });
+
+  scanBtn.addEventListener("click", () => {
+    let url = cleanUrlClient(extractFirstUrl(paste.value));
+    goGuide(url);
+  });
+
+  clearBtn.addEventListener("click", () => {
+    paste.value = "";
+    lastUrl = "";
+    paste.focus();
+    // 결과 숨김
+    document.getElementById("resultWrap").style.display = "none";
+    inflightToken++; // 진행 중 요청 무효화
+  });
+</script>
+</body>
+</html>
