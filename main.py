@@ -454,34 +454,6 @@ model = DistilBertForSequenceClassification.from_pretrained(
     "distilbert-base-uncased", num_labels=4
 )
 
-def download_from_gdrive(file_id: str, dst_path: str):
-    """
-    Google Drive direct download (큰 파일도 토큰 처리)
-    주의: 드라이브 공유가 '링크가 있는 모든 사용자'여야 함.
-    """
-    import requests
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    session = requests.Session()
-    r = session.get(url, stream=True, allow_redirects=True)
-
-    # 큰 파일이면 확인 토큰(download_warning)이 쿠키로 오는 경우가 있음
-    token = None
-    for k, v in r.cookies.items():
-        if k.startswith("download_warning"):
-            token = v
-            break
-
-    if token:
-        r = session.get(url + f"&confirm={token}", stream=True, allow_redirects=True)
-
-    r.raise_for_status()
-
-    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-    with open(dst_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=1024 * 1024):
-            if chunk:
-                f.write(chunk)
-
 def ensure_model_loaded():
     global model
 
@@ -547,16 +519,14 @@ def _cache_set(url: str, val: dict):
 
 @app.on_event("startup")
 def _startup():
+    # ✅ 모델은 startup에서 로드하지 말고, 요청 시 로드
+    # ensure_model_loaded()
 
-    ensure_model_loaded()
-
-    # ✅ known csv 확보(없으면 다운로드하도록)
     try:
         ensure_known_csv()
     except Exception as e:
         print("[startup] ensure_known_csv failed:", e)
 
-    # ✅ 기타 로컬 데이터 로드 (너 코드에 이미 있으면 유지)
     try:
         load_known_dataset()
     except Exception as e:
@@ -567,21 +537,6 @@ def _startup():
     except Exception as e:
         print("[startup] load_reported_set failed:", e)
 
-    # (선택) 워밍업
-    try:
-        with torch.no_grad():
-            inputs = tokenizer("http://example.com", truncation=True, padding=True, max_length=128, return_tensors="pt")
-            _ = model(**inputs)
-        print("✅ Warmup done")
-    except Exception as e:
-        print(f"⚠️ Warmup skipped: {e}")
-
-    # (선택) KPI 캐시
-    try:
-        _kpi_cache["data"] = compute_kpi_snapshot()
-        _kpi_cache["ts"] = time.time()
-    except Exception as e:
-        print("[startup] KPI snapshot failed:", e)
 
 
 # =========================
@@ -713,6 +668,7 @@ def app_page():
 # =========================
 @app.post("/predict")
 def predict(req: PredictRequest):
+    ensure_model_loaded() 
     raw_url = req.url or ""
     clean_url = normalize_url(raw_url)
 
