@@ -18,30 +18,27 @@ from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassific
 # ===== Google Drive model download (Render-safe) =====
 GOOGLE_DRIVE_FILE_ID = os.getenv("GOOGLE_DRIVE_FILE_ID", "").strip()  # "1WmK0Z0trB4Am0bUIiwyvbCTABriEqsf5" 같은 'id'만
 
-def download_model_from_gdrive(dest_path: str):
-    """
-    Download model file from Google Drive using file ID.
-    - GOOGLE_DRIVE_FILE_ID must be a pure file id (not full URL, not 'id=...')
-    """
-    if not GOOGLE_DRIVE_FILE_ID:
-        raise RuntimeError("GOOGLE_DRIVE_FILE_ID is empty. Set env or hardcode file id.")
+def download_from_gdrive(file_id: str, dst_path: str):
+    import gdown, os
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
 
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-    url = "https://drive.google.com/uc?export=download&id=" + GOOGLE_DRIVE_FILE_ID
+    # gdown은 confirm/토큰/대용량 다운로드를 안정적으로 처리함
+    url = f"https://drive.google.com/uc?id={file_id}"
+    out = gdown.download(url, dst_path, quiet=False, fuzzy=True)
 
-    r = requests.get(url, stream=True, timeout=60)
-    r.raise_for_status()
+    if not out or not os.path.exists(dst_path):
+        raise RuntimeError("gdown download failed")
 
-    # 아주 큰 파일은 경고 페이지가 내려올 수 있는데,
-    # 최소한 HTML이 내려오면 바로 감지해서 실패시키자 (조용히 깨지는 거 방지)
-    ctype = (r.headers.get("content-type") or "").lower()
-    if "text/html" in ctype:
-        raise RuntimeError("Google Drive returned HTML (likely permission/confirm issue). Make file 'Anyone with link'.")
-
-    with open(dest_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=1024 * 1024):
-            if chunk:
-                f.write(chunk)
+    # HTML 잘못 저장됐는지 1차 검증
+    with open(dst_path, "rb") as f:
+        head = f.read(16)
+    if head.startswith(b"<"):
+        # HTML이면 잘못 받은 것 -> 파일 삭제하고 에러
+        try:
+            os.remove(dst_path)
+        except:
+            pass
+        raise RuntimeError("Downloaded file is HTML (Google Drive permission/confirm issue).")
 
 
 # =========================
@@ -488,12 +485,24 @@ def download_from_gdrive(file_id: str, dst_path: str):
 def ensure_model_loaded():
     global model
 
+    # 파일이 없으면 다운로드
     if not os.path.exists(MODEL_PATH):
         print(f"⬇️ Model not found. Downloading to {MODEL_PATH} ...")
         download_from_gdrive(MODEL_FILE_ID, MODEL_PATH)
         print("✅ Model download done")
 
-    # 대부분 state_dict 형태일 확률이 큼
+    # 파일이 HTML로 저장된 경우(이전 실패 잔재) 제거 후 재다운
+    with open(MODEL_PATH, "rb") as f:
+        head = f.read(16)
+    if head.startswith(b"<"):
+        print("⚠️ Model file looks like HTML. Re-downloading...")
+        try:
+            os.remove(MODEL_PATH)
+        except:
+            pass
+        download_from_gdrive(MODEL_FILE_ID, MODEL_PATH)
+        print("✅ Model re-download done")
+
     state = torch.load(MODEL_PATH, map_location="cpu")
 
     if isinstance(state, dict) and "state_dict" in state:
@@ -503,11 +512,11 @@ def ensure_model_loaded():
         model.load_state_dict(state, strict=False)
         print("✅ Model state_dict loaded")
     else:
-        # 만약 통째로 저장된 모델이면 교체
         model = state
         print("✅ Whole model object loaded")
 
     model.eval()
+
 
 
 
