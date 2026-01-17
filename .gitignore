@@ -15,4 +15,7 @@ __pycache__/
 
 data/malicious_phish.csv
 
+reports/
+reports.jsonl
+data/reports.jsonl
 
