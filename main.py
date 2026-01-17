@@ -1090,7 +1090,7 @@ def guide(url: str = "", label: str = "SAFE", conf: int = 0, risk: int = -1):
 
         # ✅✅ 핵심: guide는 query로 conf/label을 받지 말고, url만 있으면 서버에서 predict를 돌려서 채운다.
         # (label/conf/risk가 명시로 들어온 경우만 예외적으로 그 값을 사용)
-        use_query_override = False
+        use_query_override = True
 
         if not use_query_override:
             pred = predict(PredictRequest(url=url_norm, page_url="guide", anchor_text="guide"))
