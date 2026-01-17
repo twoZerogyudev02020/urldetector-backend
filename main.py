@@ -1066,6 +1066,7 @@ def reports(
 # =========================
 @app.get("/guide", response_class=HTMLResponse)
 def guide(url: str = "", label: str = "SAFE", conf: int = 0, risk: int = -1):
+    
     try:
         label = normalize_text(label).upper() or "SAFE"
         url_norm = normalize_url(url)
@@ -1090,7 +1091,7 @@ def guide(url: str = "", label: str = "SAFE", conf: int = 0, risk: int = -1):
 
         # ✅✅ 핵심: guide는 query로 conf/label을 받지 말고, url만 있으면 서버에서 predict를 돌려서 채운다.
         # (label/conf/risk가 명시로 들어온 경우만 예외적으로 그 값을 사용)
-        use_query_override = True
+        use_query_override = (safe_int(risk, -1) >= 0) or (conf > 0 and label not in ("", "SAFE"))
 
         if not use_query_override:
             pred = predict(PredictRequest(url=url_norm, page_url="guide", anchor_text="guide"))
@@ -1103,8 +1104,6 @@ def guide(url: str = "", label: str = "SAFE", conf: int = 0, risk: int = -1):
         else:
             # (기존 방식 유지) query로 넘어온 label/conf/risk를 사용
             known_label = known_map.get(url_norm)
-            if known_label:
-                label = known_label
             known_match = (known_label is not None)
 
             risk_in = safe_int(risk, -1)
@@ -1117,12 +1116,7 @@ def guide(url: str = "", label: str = "SAFE", conf: int = 0, risk: int = -1):
                 )
             else:
                 risk_val = max(0, min(risk_in, 100))
-                _, rb = compute_risk_score(
-                    label=label,
-                    conf01=conf / 100.0,
-                    known_match=known_match,
-                    url_norm=url_norm
-                )
+                rb = {}
 
         if not isinstance(rb, dict):
             rb = {}
