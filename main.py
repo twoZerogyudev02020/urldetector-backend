@@ -18,30 +18,27 @@ from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassific
 # ===== Google Drive model download (Render-safe) =====
 GOOGLE_DRIVE_FILE_ID = os.getenv("GOOGLE_DRIVE_FILE_ID", "").strip()  # "1WmK0Z0trB4Am0bUIiwyvbCTABriEqsf5" 같은 'id'만
 
-def download_model_from_gdrive(dest_path: str):
-    """
-    Download model file from Google Drive using file ID.
-    - GOOGLE_DRIVE_FILE_ID must be a pure file id (not full URL, not 'id=...')
-    """
-    if not GOOGLE_DRIVE_FILE_ID:
-        raise RuntimeError("GOOGLE_DRIVE_FILE_ID is empty. Set env or hardcode file id.")
+def download_from_gdrive(file_id: str, dst_path: str):
+    import gdown, os
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
 
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-    url = "https://drive.google.com/uc?export=download&id=" + GOOGLE_DRIVE_FILE_ID
+    # gdown은 confirm/토큰/대용량 다운로드를 안정적으로 처리함
+    url = f"https://drive.google.com/uc?id={file_id}"
+    out = gdown.download(url, dst_path, quiet=False, fuzzy=True)
 
-    r = requests.get(url, stream=True, timeout=60)
-    r.raise_for_status()
+    if not out or not os.path.exists(dst_path):
+        raise RuntimeError("gdown download failed")
 
-    # 아주 큰 파일은 경고 페이지가 내려올 수 있는데,
-    # 최소한 HTML이 내려오면 바로 감지해서 실패시키자 (조용히 깨지는 거 방지)
-    ctype = (r.headers.get("content-type") or "").lower()
-    if "text/html" in ctype:
-        raise RuntimeError("Google Drive returned HTML (likely permission/confirm issue). Make file 'Anyone with link'.")
-
-    with open(dest_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=1024 * 1024):
-            if chunk:
-                f.write(chunk)
+    # HTML 잘못 저장됐는지 1차 검증
+    with open(dst_path, "rb") as f:
+        head = f.read(16)
+    if head.startswith(b"<"):
+        # HTML이면 잘못 받은 것 -> 파일 삭제하고 에러
+        try:
+            os.remove(dst_path)
+        except:
+            pass
+        raise RuntimeError("Downloaded file is HTML (Google Drive permission/confirm issue).")
 
 
 # =========================
@@ -452,64 +449,49 @@ def compute_kpi_snapshot():
 # 구글드라이브 파일 ID (Render 환경변수로도 바꿀 수 있게)
 MODEL_FILE_ID = os.getenv("MODEL_FILE_ID", "1WmK0Z0trB4Am0bUIiwyvbCTABriEqsf5")
 
-tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
-model = DistilBertForSequenceClassification.from_pretrained(
-    "distilbert-base-uncased", num_labels=4
-)
-
-def download_from_gdrive(file_id: str, dst_path: str):
-    """
-    Google Drive direct download (큰 파일도 토큰 처리)
-    주의: 드라이브 공유가 '링크가 있는 모든 사용자'여야 함.
-    """
-    import requests
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    session = requests.Session()
-    r = session.get(url, stream=True, allow_redirects=True)
-
-    # 큰 파일이면 확인 토큰(download_warning)이 쿠키로 오는 경우가 있음
-    token = None
-    for k, v in r.cookies.items():
-        if k.startswith("download_warning"):
-            token = v
-            break
-
-    if token:
-        r = session.get(url + f"&confirm={token}", stream=True, allow_redirects=True)
-
-    r.raise_for_status()
-
-    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-    with open(dst_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=1024 * 1024):
-            if chunk:
-                f.write(chunk)
+tokenizer = None
+model = None
 
 def ensure_model_loaded():
-    global model
+    global model, tokenizer
 
+    # ✅ torch/transformers는 "필요할 때" import (메모리/시간 분산)
+    import torch
+    from transformers import DistilBertTokenizerFast, DistilBertConfig, DistilBertForSequenceClassification
+
+    if tokenizer is None:
+        tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
+
+    # ✅ 모델 객체가 없으면 "config로만" 생성 (base weights 다운로드/적재 X)
+    if model is None:
+        cfg = DistilBertConfig.from_pretrained("distilbert-base-uncased", num_labels=4)
+        model = DistilBertForSequenceClassification(cfg)
+
+    # 파일 없으면 다운로드
     if not os.path.exists(MODEL_PATH):
         print(f"⬇️ Model not found. Downloading to {MODEL_PATH} ...")
         download_from_gdrive(MODEL_FILE_ID, MODEL_PATH)
         print("✅ Model download done")
 
-    # 대부분 state_dict 형태일 확률이 큼
-    state = torch.load(MODEL_PATH, map_location="cpu")
+    # HTML이면 재다운
+    with open(MODEL_PATH, "rb") as f:
+        head = f.read(16)
+    if head.startswith(b"<"):
+        print("⚠️ Model file looks like HTML. Re-downloading...")
+        try:
+            os.remove(MODEL_PATH)
+        except:
+            pass
+        download_from_gdrive(MODEL_FILE_ID, MODEL_PATH)
+        print("✅ Model re-download done")
 
+    state = torch.load(MODEL_PATH, map_location="cpu")
     if isinstance(state, dict) and "state_dict" in state:
         state = state["state_dict"]
 
-    if isinstance(state, dict):
-        model.load_state_dict(state, strict=False)
-        print("✅ Model state_dict loaded")
-    else:
-        # 만약 통째로 저장된 모델이면 교체
-        model = state
-        print("✅ Whole model object loaded")
-
+    model.load_state_dict(state, strict=False)
     model.eval()
-
-
+    print("✅ Model loaded (lazy)")
 
 # =========================
 # ✅ Predict cache
@@ -538,16 +520,14 @@ def _cache_set(url: str, val: dict):
 
 @app.on_event("startup")
 def _startup():
+    # ✅ 모델은 startup에서 로드하지 말고, 요청 시 로드
+    # ensure_model_loaded()
 
-    ensure_model_loaded()
-
-    # ✅ known csv 확보(없으면 다운로드하도록)
     try:
         ensure_known_csv()
     except Exception as e:
         print("[startup] ensure_known_csv failed:", e)
 
-    # ✅ 기타 로컬 데이터 로드 (너 코드에 이미 있으면 유지)
     try:
         load_known_dataset()
     except Exception as e:
@@ -558,21 +538,6 @@ def _startup():
     except Exception as e:
         print("[startup] load_reported_set failed:", e)
 
-    # (선택) 워밍업
-    try:
-        with torch.no_grad():
-            inputs = tokenizer("http://example.com", truncation=True, padding=True, max_length=128, return_tensors="pt")
-            _ = model(**inputs)
-        print("✅ Warmup done")
-    except Exception as e:
-        print(f"⚠️ Warmup skipped: {e}")
-
-    # (선택) KPI 캐시
-    try:
-        _kpi_cache["data"] = compute_kpi_snapshot()
-        _kpi_cache["ts"] = time.time()
-    except Exception as e:
-        print("[startup] KPI snapshot failed:", e)
 
 
 # =========================
@@ -704,6 +669,7 @@ def app_page():
 # =========================
 @app.post("/predict")
 def predict(req: PredictRequest):
+    ensure_model_loaded() 
     raw_url = req.url or ""
     clean_url = normalize_url(raw_url)
 
@@ -1124,7 +1090,7 @@ def guide(url: str = "", label: str = "SAFE", conf: int = 0, risk: int = -1):
 
         # ✅✅ 핵심: guide는 query로 conf/label을 받지 말고, url만 있으면 서버에서 predict를 돌려서 채운다.
         # (label/conf/risk가 명시로 들어온 경우만 예외적으로 그 값을 사용)
-        use_query_override = False
+        use_query_override = True
 
         if not use_query_override:
             pred = predict(PredictRequest(url=url_norm, page_url="guide", anchor_text="guide"))
