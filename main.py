@@ -449,21 +449,31 @@ def compute_kpi_snapshot():
 # 구글드라이브 파일 ID (Render 환경변수로도 바꿀 수 있게)
 MODEL_FILE_ID = os.getenv("MODEL_FILE_ID", "1WmK0Z0trB4Am0bUIiwyvbCTABriEqsf5")
 
-tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
-model = DistilBertForSequenceClassification.from_pretrained(
-    "distilbert-base-uncased", num_labels=4
-)
+tokenizer = None
+model = None
 
 def ensure_model_loaded():
-    global model
+    global model, tokenizer
 
-    # 파일이 없으면 다운로드
+    # ✅ torch/transformers는 "필요할 때" import (메모리/시간 분산)
+    import torch
+    from transformers import DistilBertTokenizerFast, DistilBertConfig, DistilBertForSequenceClassification
+
+    if tokenizer is None:
+        tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
+
+    # ✅ 모델 객체가 없으면 "config로만" 생성 (base weights 다운로드/적재 X)
+    if model is None:
+        cfg = DistilBertConfig.from_pretrained("distilbert-base-uncased", num_labels=4)
+        model = DistilBertForSequenceClassification(cfg)
+
+    # 파일 없으면 다운로드
     if not os.path.exists(MODEL_PATH):
         print(f"⬇️ Model not found. Downloading to {MODEL_PATH} ...")
         download_from_gdrive(MODEL_FILE_ID, MODEL_PATH)
         print("✅ Model download done")
 
-    # 파일이 HTML로 저장된 경우(이전 실패 잔재) 제거 후 재다운
+    # HTML이면 재다운
     with open(MODEL_PATH, "rb") as f:
         head = f.read(16)
     if head.startswith(b"<"):
@@ -476,21 +486,12 @@ def ensure_model_loaded():
         print("✅ Model re-download done")
 
     state = torch.load(MODEL_PATH, map_location="cpu")
-
     if isinstance(state, dict) and "state_dict" in state:
         state = state["state_dict"]
 
-    if isinstance(state, dict):
-        model.load_state_dict(state, strict=False)
-        print("✅ Model state_dict loaded")
-    else:
-        model = state
-        print("✅ Whole model object loaded")
-
+    model.load_state_dict(state, strict=False)
     model.eval()
-
-
-
+    print("✅ Model loaded (lazy)")
 
 # =========================
 # ✅ Predict cache
