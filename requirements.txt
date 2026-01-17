@@ -4,5 +4,5 @@ pydantic==2.6.4
 transformers==4.41.2
 
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.1.2
+torch==2.1.2+cpu
 requests==2.31.0
