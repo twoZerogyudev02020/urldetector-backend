@@ -15,6 +15,35 @@ import torch
 import torch.nn.functional as F
 from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
 
+# ===== Google Drive model download (Render-safe) =====
+GOOGLE_DRIVE_FILE_ID = os.getenv("GOOGLE_DRIVE_FILE_ID", "").strip()  # "1WmK0Z0trB4Am0bUIiwyvbCTABriEqsf5" 같은 'id'만
+
+def download_model_from_gdrive(dest_path: str):
+    """
+    Download model file from Google Drive using file ID.
+    - GOOGLE_DRIVE_FILE_ID must be a pure file id (not full URL, not 'id=...')
+    """
+    if not GOOGLE_DRIVE_FILE_ID:
+        raise RuntimeError("GOOGLE_DRIVE_FILE_ID is empty. Set env or hardcode file id.")
+
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    url = "https://drive.google.com/uc?export=download&id=" + GOOGLE_DRIVE_FILE_ID
+
+    r = requests.get(url, stream=True, timeout=60)
+    r.raise_for_status()
+
+    # 아주 큰 파일은 경고 페이지가 내려올 수 있는데,
+    # 최소한 HTML이 내려오면 바로 감지해서 실패시키자 (조용히 깨지는 거 방지)
+    ctype = (r.headers.get("content-type") or "").lower()
+    if "text/html" in ctype:
+        raise RuntimeError("Google Drive returned HTML (likely permission/confirm issue). Make file 'Anyone with link'.")
+
+    with open(dest_path, "wb") as f:
+        for chunk in r.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                f.write(chunk)
+
+
 # =========================
 # App
 # =========================
@@ -41,18 +70,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PWA_DIR = os.path.join(BASE_DIR, "pwa")  # pwa 경로 상수 추가
 # .../URLDETECTOR/backend
 MODEL_PATH = os.path.join(BASE_DIR, "distilbert_best.pt")
-
-GOOGLE_DRIVE_FILE_ID = "1WmK0Z0trB4Am0bUIiwyvbCTABriEqsf5"
-GOOGLE_DRIVE_DOWNLOAD_URL = f"https://drive.google.com/uc?export=download&id={GOOGLE_DRIVE_FILE_ID}"
-def download_model_from_gdrive(dest_path: str):
-    print("[MODEL] Downloading model from Google Drive...")
-    with requests.get(GOOGLE_DRIVE_DOWNLOAD_URL, stream=True) as r:
-        r.raise_for_status()
-        with open(dest_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-    print("[MODEL] Download complete.")
 
 
 # ✅ known DB
@@ -431,8 +448,6 @@ def compute_kpi_snapshot():
 # =========================
 # Model load (Render-safe)
 # =========================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "distilbert_best.pt")
 
 # 구글드라이브 파일 ID (Render 환경변수로도 바꿀 수 있게)
 MODEL_FILE_ID = os.getenv("MODEL_FILE_ID", "1WmK0Z0trB4Am0bUIiwyvbCTABriEqsf5")
@@ -523,46 +538,42 @@ def _cache_set(url: str, val: dict):
 
 @app.on_event("startup")
 def _startup():
-        # ✅ 모델 파일 없으면 시작 시 다운로드
-    if not os.path.exists(MODEL_PATH):
-        download_model_from_gdrive(MODEL_PATH)
-
-    # ✅ 모델 로드(기존처럼 state_dict/전체모델 둘 다 대응)
-    try:
-        state = torch.load(MODEL_PATH, map_location=torch.device("cpu"))
-        if isinstance(state, dict) and "state_dict" in state:
-            model.load_state_dict(state["state_dict"])
-        elif isinstance(state, dict):
-            model.load_state_dict(state)
-        else:
-            # 통째로 저장한 모델이면 model 자체를 교체
-            globals()["model"] = state
-        globals()["model"].eval()
-        print(f"✅ Loaded model from: {MODEL_PATH}")
-    except Exception as e:
-        print(f"❌ Model load failed: {e}")
-        # 여기서 raise 하면 서버가 죽음. 일단 베이스 모델로라도 뜨게 두려면 raise 하지 마.
-
 
     ensure_model_loaded()
-    ensure_known_csv()   # ✅ 추가 (없으면 다운로드)
-    load_known_dataset()
-    load_reported_set()
+
+    # ✅ known csv 확보(없으면 다운로드하도록)
+    try:
+        ensure_known_csv()
+    except Exception as e:
+        print("[startup] ensure_known_csv failed:", e)
+
+    # ✅ 기타 로컬 데이터 로드 (너 코드에 이미 있으면 유지)
+    try:
+        load_known_dataset()
+    except Exception as e:
+        print("[startup] load_known_dataset failed:", e)
 
     try:
+        load_reported_set()
+    except Exception as e:
+        print("[startup] load_reported_set failed:", e)
+
+    # (선택) 워밍업
+    try:
         with torch.no_grad():
-            x = tokenizer(["http://example.com"], truncation=True, padding=True, return_tensors="pt")
-            _ = model(**x)
+            inputs = tokenizer("http://example.com", truncation=True, padding=True, max_length=128, return_tensors="pt")
+            _ = model(**inputs)
         print("✅ Warmup done")
     except Exception as e:
         print(f"⚠️ Warmup skipped: {e}")
 
+    # (선택) KPI 캐시
     try:
         _kpi_cache["data"] = compute_kpi_snapshot()
         _kpi_cache["ts"] = time.time()
-        print("✅ KPI cache primed")
     except Exception as e:
-        print(f"⚠️ KPI cache prime failed: {e}")
+        print("[startup] KPI snapshot failed:", e)
+
 
 # =========================
 # Schemas
