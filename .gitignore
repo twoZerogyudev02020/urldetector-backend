@@ -13,8 +13,6 @@ __pycache__/
 # os
 .DS_Store
 
-reports.jsonl
-reports/
 data/malicious_phish.csv
 
 
