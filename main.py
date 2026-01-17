@@ -429,31 +429,72 @@ def compute_kpi_snapshot():
     }
 
 # =========================
-# Model load
+# Model load (Render-safe)
 # =========================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "distilbert_best.pt")
+
+# 구글드라이브 파일 ID (Render 환경변수로도 바꿀 수 있게)
+MODEL_FILE_ID = os.getenv("MODEL_FILE_ID", "1WmK0Z0trB4Am0bUIiwyvbCTABriEqsf5")
+
 tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
 model = DistilBertForSequenceClassification.from_pretrained(
     "distilbert-base-uncased", num_labels=4
 )
 
-if os.path.exists(MODEL_PATH):
-    try:
-        state = torch.load(MODEL_PATH, map_location=torch.device("cpu"))
-        if isinstance(state, dict) and "state_dict" in state:
-            model.load_state_dict(state["state_dict"])
-        elif isinstance(state, dict):
-            model.load_state_dict(state)
-        else:
-            model = state
-        print(f"✅ Loaded model from: {MODEL_PATH}")
-    except Exception as e:
-        print(f"❌ Model load failed: {e}")
-else:
-    print(f"⚠️ Model file not found: {MODEL_PATH} (fallback to base model)")
+def download_from_gdrive(file_id: str, dst_path: str):
+    """
+    Google Drive direct download (큰 파일도 토큰 처리)
+    주의: 드라이브 공유가 '링크가 있는 모든 사용자'여야 함.
+    """
+    import requests
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    session = requests.Session()
+    r = session.get(url, stream=True, allow_redirects=True)
+
+    # 큰 파일이면 확인 토큰(download_warning)이 쿠키로 오는 경우가 있음
+    token = None
+    for k, v in r.cookies.items():
+        if k.startswith("download_warning"):
+            token = v
+            break
+
+    if token:
+        r = session.get(url + f"&confirm={token}", stream=True, allow_redirects=True)
+
+    r.raise_for_status()
+
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+    with open(dst_path, "wb") as f:
+        for chunk in r.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                f.write(chunk)
+
+def ensure_model_loaded():
+    global model
+
+    if not os.path.exists(MODEL_PATH):
+        print(f"⬇️ Model not found. Downloading to {MODEL_PATH} ...")
+        download_from_gdrive(MODEL_FILE_ID, MODEL_PATH)
+        print("✅ Model download done")
+
+    # 대부분 state_dict 형태일 확률이 큼
+    state = torch.load(MODEL_PATH, map_location="cpu")
+
+    if isinstance(state, dict) and "state_dict" in state:
+        state = state["state_dict"]
+
+    if isinstance(state, dict):
+        model.load_state_dict(state, strict=False)
+        print("✅ Model state_dict loaded")
+    else:
+        # 만약 통째로 저장된 모델이면 교체
+        model = state
+        print("✅ Whole model object loaded")
+
+    model.eval()
 
 
-model = torch.load(MODEL_PATH, map_location="cpu")
-model.eval()
 
 # =========================
 # ✅ Predict cache
@@ -502,7 +543,8 @@ def _startup():
         print(f"❌ Model load failed: {e}")
         # 여기서 raise 하면 서버가 죽음. 일단 베이스 모델로라도 뜨게 두려면 raise 하지 마.
 
-    
+
+    ensure_model_loaded()
     ensure_known_csv()   # ✅ 추가 (없으면 다운로드)
     load_known_dataset()
     load_reported_set()
