@@ -1103,8 +1103,8 @@ def guide(url: str = "", label: str = "SAFE", conf: int = 0, risk: int = -1):
             known_match = bool(pred.get("known_match", False))
         else:
             # (기존 방식 유지) query로 넘어온 label/conf/risk를 사용
-            known_label = known_map.get(url_norm)
-            known_match = (known_label is not None)
+            known_label = None
+            known_match = False
 
             risk_in = safe_int(risk, -1)
             if risk_in < 0:
