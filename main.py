@@ -42,12 +42,8 @@ PWA_DIR = os.path.join(BASE_DIR, "pwa")  # pwa 경로 상수 추가
 # .../URLDETECTOR/backend
 MODEL_PATH = os.path.join(BASE_DIR, "distilbert_best.pt")
 
-GOOGLE_DRIVE_FILE_ID = "id) 1WmK0Z0trB4Am0bUIiwyvbCTABriEqsf5"
-GOOGLE_DRIVE_DOWNLOAD_URL = (
-    "https://drive.google.com/uc?export=download&id="
-    + GOOGLE_DRIVE_FILE_ID
-)
-
+GOOGLE_DRIVE_FILE_ID = "1WmK0Z0trB4Am0bUIiwyvbCTABriEqsf5"
+GOOGLE_DRIVE_DOWNLOAD_URL = f"https://drive.google.com/uc?export=download&id={GOOGLE_DRIVE_FILE_ID}"
 def download_model_from_gdrive(dest_path: str):
     print("[MODEL] Downloading model from Google Drive...")
     with requests.get(GOOGLE_DRIVE_DOWNLOAD_URL, stream=True) as r:
@@ -455,8 +451,6 @@ if os.path.exists(MODEL_PATH):
 else:
     print(f"⚠️ Model file not found: {MODEL_PATH} (fallback to base model)")
 
-if not os.path.exists(MODEL_PATH):
-    download_model_from_gdrive(MODEL_PATH)
 
 model = torch.load(MODEL_PATH, map_location="cpu")
 model.eval()
@@ -488,6 +482,27 @@ def _cache_set(url: str, val: dict):
 
 @app.on_event("startup")
 def _startup():
+        # ✅ 모델 파일 없으면 시작 시 다운로드
+    if not os.path.exists(MODEL_PATH):
+        download_model_from_gdrive(MODEL_PATH)
+
+    # ✅ 모델 로드(기존처럼 state_dict/전체모델 둘 다 대응)
+    try:
+        state = torch.load(MODEL_PATH, map_location=torch.device("cpu"))
+        if isinstance(state, dict) and "state_dict" in state:
+            model.load_state_dict(state["state_dict"])
+        elif isinstance(state, dict):
+            model.load_state_dict(state)
+        else:
+            # 통째로 저장한 모델이면 model 자체를 교체
+            globals()["model"] = state
+        globals()["model"].eval()
+        print(f"✅ Loaded model from: {MODEL_PATH}")
+    except Exception as e:
+        print(f"❌ Model load failed: {e}")
+        # 여기서 raise 하면 서버가 죽음. 일단 베이스 모델로라도 뜨게 두려면 raise 하지 마.
+
+    
     ensure_known_csv()   # ✅ 추가 (없으면 다운로드)
     load_known_dataset()
     load_reported_set()
